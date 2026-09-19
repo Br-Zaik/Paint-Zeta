@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Preparar Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -32,49 +32,95 @@ jobs:
       - name: Encontrar y extraer ZIP
         shell: bash
         run: |
-          ZIP="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
+          set -e
+          rm -rf extracted output
+          mkdir -p extracted output
+
+          ZIP="$(find . -maxdepth 1 -type f -iname '*.zip' | head -n 1)"
 
           if [ -z "$ZIP" ]; then
-            echo "ERROR: No se encontro ningun ZIP"
+            echo "ERROR: No se encontró ningún ZIP en la raíz del repo"
             exit 1
           fi
 
           echo "ZIP seleccionado: $ZIP"
+          unzip -q -o "$ZIP" -d extracted
 
-          mkdir -p extracted
-          unzip -q "$ZIP" -d extracted
-
-          PROJECT_FILE="$(find extracted -type f -name settings.gradle -print -quit)"
+          PROJECT_FILE="$(find extracted -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) | head -n 1)"
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "ERROR: No se encontro el proyecto Android"
+            echo "ERROR: No se encontró settings.gradle ni settings.gradle.kts"
+            find extracted -maxdepth 4 -type f | sed -n '1,120p'
             exit 1
           fi
 
-          echo "PROJECT_DIR=$(dirname "$PROJECT_FILE")" >> "$GITHUB_ENV"
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Proyecto detectado: $PROJECT_DIR"
+
+      - name: Parche rápido de build.gradle
+        shell: bash
+        run: |
+          set -e
+          APP_GRADLE="$PROJECT_DIR/app/build.gradle"
+
+          if [ -f "$APP_GRADLE" ]; then
+            python3 - <<'PY'
+from pathlib import Path
+import os
+
+p = Path(os.environ["PROJECT_DIR"]) / "app" / "build.gradle"
+txt = p.read_text(encoding="utf-8")
+
+if "androidx.activity:activity:" not in txt:
+    txt = txt.replace(
+        "dependencies {",
+        "dependencies {\n"
+        "    implementation 'androidx.activity:activity:1.9.2'\n"
+        "    implementation 'androidx.core:core:1.13.1'"
+    )
+
+p.write_text(txt, encoding="utf-8")
+print("Parche aplicado a:", p)
+PY
+          else
+            echo "No se encontró app/build.gradle para parchear"
+          fi
 
       - name: Compilar APK Android
         shell: bash
         run: |
-          gradle -p "$PROJECT_DIR" :app:assembleDebug --no-daemon --stacktrace
+          set -o pipefail
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/output/build.log"
 
       - name: Preparar APK
         shell: bash
         run: |
-          APK="$(find extracted -type f -path '*/app/build/outputs/apk/debug/*.apk' -print -quit)"
+          set -e
+          APK="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -type f -name '*.apk' | head -n 1)"
 
           if [ -z "$APK" ]; then
-            echo "ERROR: No se genero APK"
+            echo "ERROR: No se generó APK"
             exit 1
           fi
 
-          mkdir -p output
-          cp "$APK" output/Paint-Zeta-debug.apk
+          cp "$APK" "$GITHUB_WORKSPACE/output/Paint-Zeta-debug.apk"
+          echo "APK listo: $APK"
 
-      - name: Publicar APK
+      - name: Subir APK
         uses: actions/upload-artifact@v4
         with:
           name: Paint-Zeta-APK
           path: output/Paint-Zeta-debug.apk
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Subir log si falla
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paint-Zeta-build-log
+          path: output/build.log
+          if-no-files-found: warn
           retention-days: 14
