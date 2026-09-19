@@ -17,35 +17,57 @@ jobs:
       - name: Descargar repositorio
         uses: actions/checkout@v4
 
-      - name: Instalar Java 17
+      - name: Preparar Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Instalar Gradle 8.7
+      - name: Preparar Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
-      - name: Extraer proyecto Android
+      - name: Extraer ZIP del proyecto
         shell: bash
         run: |
           set -euo pipefail
-          ZIP="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
+          mkdir -p extracted output
+          ZIP="$(find . -maxdepth 1 -type f -iname '*.zip' -print | sort | tail -n 1)"
           if [ -z "$ZIP" ]; then
-            echo 'ERROR: Sube un ZIP en la raiz del repositorio.'
+            echo 'ERROR: No hay archivo ZIP en la raiz del repositorio.'
             exit 1
           fi
-          echo "Usando $ZIP"
-          mkdir -p extracted output
-          unzip -q "$ZIP" -d extracted
-          SETTINGS="$(find extracted -type f \( -name settings.gradle -o -name settings.gradle.kts \) -print -quit)"
+          echo "ZIP elegido: $ZIP"
+          unzip -q -o "$ZIP" -d extracted
+          SETTINGS="$(find extracted -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -print -quit)"
           if [ -z "$SETTINGS" ]; then
-            echo 'ERROR: El ZIP no contiene un proyecto Android Gradle.'
+            echo 'ERROR: El ZIP no incluye un proyecto Android Gradle.'
             exit 1
           fi
           echo "PROJECT_DIR=$(dirname "$SETTINGS")" >> "$GITHUB_ENV"
+
+      - name: Solucionar conflicto de versiones Kotlin
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_FILE="$PROJECT_DIR/app/build.gradle"
+          if [ -f "$BUILD_FILE" ]; then
+            if ! grep -q 'PAINT_ZETA_KOTLIN_ALIGNMENT' "$BUILD_FILE"; then
+              printf '%s\n' \
+                '' \
+                '// PAINT_ZETA_KOTLIN_ALIGNMENT: evitar clases duplicadas de kotlin-stdlib 1.8.22 / kotlin-stdlib-jdk8 1.6.21' \
+                'configurations.configureEach {' \
+                '    resolutionStrategy.force "org.jetbrains.kotlin:kotlin-stdlib:1.8.22", "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22", "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22"' \
+                '}' >> "$BUILD_FILE"
+              echo 'Versiones Kotlin alineadas en 1.8.22.'
+            else
+              echo 'El proyecto ya trae la correccion Kotlin.'
+            fi
+          else
+            echo 'ERROR: Este proyecto no tiene app/build.gradle; se requiere una configuracion especial.'
+            exit 1
+          fi
 
       - name: Compilar APK Android
         shell: bash
@@ -59,7 +81,7 @@ jobs:
           set -euo pipefail
           APK="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -type f -name '*.apk' -print -quit)"
           if [ -z "$APK" ]; then
-            echo 'ERROR: La compilacion no genero ninguna APK.'
+            echo 'ERROR: No se genero APK.'
             exit 1
           fi
           cp "$APK" output/Paint-Zeta-debug.apk
@@ -72,7 +94,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Guardar error para diagnostico
+      - name: Guardar log si falla
         if: failure()
         uses: actions/upload-artifact@v4
         with:
