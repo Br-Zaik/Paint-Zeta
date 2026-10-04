@@ -21,20 +21,184 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-      - name: Extraer
+
+      - name: Extraer v8.8
         shell: bash
         run: |
+          set -euo pipefail
+          rm -rf extracted output
           mkdir -p extracted output
           unzip -q -o Paint-Zeta-v8_8-Referencia-Color.zip -d extracted
           echo "PROJECT_DIR=extracted/PaintZeta" >> "$GITHUB_ENV"
-      - name: Ver panel capas y helpers
+
+      - name: Aplicar correcciones v8.9
         shell: bash
         run: |
-          M="$PROJECT_DIR/app/src/main/java/com/pacco/animecut/MainActivity.java"
-          echo '=== BUILD LAYERS MATCH ==='
-          grep -n "buildLayersPanel\|layersPanel\|Capas\|smallAction" "$M" | head -n 120
-          echo '=== MAIN 1900-2330 ==='; sed -n '1900,2330p' "$M"
-          echo '=== MAIN 3520-3635 ==='; sed -n '3520,3635p' "$M"
-      - name: Compilar
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path('extracted/PaintZeta')
+          main = root/'app/src/main/java/com/pacco/animecut/MainActivity.java'
+          canvas = root/'app/src/main/java/com/pacco/animecut/view/CanvasView.java'
+          m = main.read_text(encoding='utf-8')
+          c = canvas.read_text(encoding='utf-8')
+
+          def replace_once(text, old, new, label):
+              n = text.count(old)
+              if n != 1:
+                  raise SystemExit(f'{label}: se esperaba 1 coincidencia y hay {n}')
+              return text.replace(old, new, 1)
+
+          # 1) Especial: menos acumulacion entre sellos para evitar ondas y arrastres largos.
+          c = replace_once(c,
+              'if (mode == MODE_LIQUIFY) step = Math.max(1f, brushRadius * 0.22f);',
+              'if (mode == MODE_LIQUIFY) step = Math.max(1.5f, brushRadius * 0.34f);',
+              'espaciado Especial')
+          c = replace_once(c,
+              'n = Math.min(n, 64);',
+              'n = Math.min(n, mode == MODE_LIQUIFY ? 32 : 64);',
+              'limite stamps')
+          c = replace_once(c,
+              'float maxDrag = Math.max(1f, r * (special ? .18f : .14f));',
+              'float maxDrag = Math.max(1f, r * (special ? .10f : .14f));',
+              'max drag')
+          c = replace_once(c,
+              'float gainMax = special ? (.45f + 1.35f * base) : (.35f + .65f * base);',
+              'float gainMax = special ? (.22f + .58f * base) : (.35f + .65f * base);',
+              'gain max')
+          c = replace_once(c,
+              'float innerFrac = .78f * (1f - soft);',
+              'float innerFrac = .68f * (1f - soft);',
+              'falloff Especial')
+          c = replace_once(c,
+              'float gain = (.45f + 1.35f * base) * fall;',
+              'float gain = (.22f + .58f * base) * fall;',
+              'gain arrastrar')
+          c = replace_once(c,
+              'float k = 1f + (.10f + .30f * base) * fall;',
+              'float k = 1f + (.06f + .18f * base) * fall;',
+              'contraer suave')
+          c = replace_once(c,
+              'float k = Math.max(.48f, 1f - (.09f + .27f * base) * fall);',
+              'float k = Math.max(.68f, 1f - (.06f + .18f * base) * fall);',
+              'expandir suave')
+          c = replace_once(c,
+              'float a = (.10f + .42f * base) * fall;',
+              'float a = (.06f + .22f * base) * fall;',
+              'remolino suave')
+          c = replace_once(c,
+              'blend = Math.min(1f, fall * sel * (.88f + .12f * base));',
+              'blend = Math.min(1f, fall * sel * (.96f + .04f * base));',
+              'mezcla Especial')
+
+          # 2) Transformar: quitar los cuatro +/- visualmente repetidos.
+          old_transform = '''            if (tt == 2) {
+                // Filas y columnas se controlan por separado. Permite cuadros mas
+                // pequenos donde hace falta precision sin llenar toda la malla.
+                bar.addView(iconButton(R.drawable.ic_sub, "Menos columnas", new Runnable() {
+                    public void run() { canvas.changeTransformGridCols(-1); updateUi(); }
+                }));
+                bar.addView(iconButton(R.drawable.ic_add, "Mas columnas", new Runnable() {
+                    public void run() { canvas.changeTransformGridCols(1); updateUi(); }
+                }));
+                bar.addView(iconButton(R.drawable.ic_sub, "Menos filas", new Runnable() {
+                    public void run() { canvas.changeTransformGridRows(-1); updateUi(); }
+                }));
+                bar.addView(iconButton(R.drawable.ic_add, "Mas filas", new Runnable() {
+                    public void run() { canvas.changeTransformGridRows(1); updateUi(); }
+                }));
+            }
+'''
+          new_transform = '''            if (tt == 2) {
+                // Malla simple: un solo - y un solo +. Cambia filas y columnas juntas
+                // para no mostrar cuatro botones iguales y confusos.
+                bar.addView(iconButton(R.drawable.ic_sub, "Malla menos densa", new Runnable() {
+                    public void run() { canvas.changeTransformGrid(-1); updateUi(); }
+                }));
+                TextView gridInfo = new TextView(this);
+                gridInfo.setText(canvas.getTransformGridCols() + " x " + canvas.getTransformGridRows());
+                gridInfo.setTextColor(0xFFE6E6E6);
+                gridInfo.setTextSize(12f);
+                gridInfo.setGravity(android.view.Gravity.CENTER);
+                gridInfo.setPadding(dp(5), 0, dp(5), 0);
+                bar.addView(gridInfo, new LinearLayout.LayoutParams(dp(54), dp(44)));
+                bar.addView(iconButton(R.drawable.ic_add, "Malla mas densa", new Runnable() {
+                    public void run() { canvas.changeTransformGrid(1); updateUi(); }
+                }));
+            }
+'''
+          m = replace_once(m, old_transform, new_transform, 'UI Transformar')
+
+          # 3) Referencia de color visible directamente dentro de Capas.
+          marker = '''        addAction(bar, R.drawable.ic_dup, "Duplicar", new Runnable() {
+            public void run() {
+                canvas.duplicateActive();
+                afterLayerOp();
+            }
+        });
+'''
+          insert = marker + '''        addAction(bar, R.drawable.ic_layer_add, "Ref. color", new Runnable() {
+            public void run() {
+                requestColorReference(new ColorPickTarget() {
+                    @Override public void onColor(int color) {
+                        canvas.setColor(color | 0xFF000000);
+                        canvas.showHud("Color tomado de la referencia");
+                        updateUi();
+                    }
+                });
+            }
+        });
+'''
+          m = replace_once(m, marker, insert, 'Referencia en Capas')
+
+          # Aclarar nombres principales de Transformar mediante mensajes al tocar.
+          m = replace_once(m,
+              'public void run() { canvas.setTransformType(0); updateUi(); }',
+              'public void run() { canvas.setTransformType(0); canvas.showHud("Mover / escalar / girar"); updateUi(); }',
+              'transform libre')
+          m = replace_once(m,
+              'public void run() { canvas.setTransformType(1); updateUi(); }',
+              'public void run() { canvas.setTransformType(1); canvas.showHud("Perspectiva: mueve las 4 esquinas"); updateUi(); }',
+              'transform perspectiva')
+          m = replace_once(m,
+              'public void run() { canvas.setTransformType(2); updateUi(); }',
+              'public void run() { canvas.setTransformType(2); canvas.showHud("Malla: arrastra los puntos para deformar"); updateUi(); }',
+              'transform malla')
+
+          main.write_text(m, encoding='utf-8')
+          canvas.write_text(c, encoding='utf-8')
+          print('v8.9 aplicada correctamente')
+          PY
+
+      - name: Compilar APK
         shell: bash
-        run: gradle -p "$PROJECT_DIR" :app:assembleDebug --no-daemon --console=plain
+        run: |
+          set -euo pipefail
+          gradle -p "$PROJECT_DIR" :app:assembleDebug --no-daemon --console=plain
+
+      - name: Preparar entregables
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -type f -name '*.apk' -print -quit)"
+          test -n "$APK"
+          cp "$APK" output/Paint-Zeta-v8_9-debug.apk
+          (cd extracted && zip -qr ../output/Paint-Zeta-v8_9-Especial-Transform-Referencia.zip PaintZeta)
+          ls -lh output
+
+      - name: Subir APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paint-Zeta-v8_9-APK
+          path: output/Paint-Zeta-v8_9-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Subir codigo fuente ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paint-Zeta-v8_9-Source
+          path: output/Paint-Zeta-v8_9-Especial-Transform-Referencia.zip
+          if-no-files-found: error
+          retention-days: 14
