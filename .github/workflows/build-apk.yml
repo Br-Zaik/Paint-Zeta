@@ -12,101 +12,30 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
-      - name: Descargar repositorio
-        uses: actions/checkout@v4
-
-      - name: Preparar Java 17
-        uses: actions/setup-java@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Preparar Gradle 8.7
-        uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-
-      - name: Extraer ZIP del proyecto
+      - name: Extraer
         shell: bash
         run: |
-          set -euo pipefail
           mkdir -p extracted output
-          ZIP="$(find . -maxdepth 1 -type f -iname '*.zip' -print | sort | tail -n 1)"
-          if [ -z "$ZIP" ]; then
-            echo 'ERROR: No hay archivo ZIP en la raiz del repositorio.'
-            exit 1
-          fi
-          echo "ZIP elegido: $ZIP"
-          unzip -q -o "$ZIP" -d extracted
-          SETTINGS="$(find extracted -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -print -quit)"
-          if [ -z "$SETTINGS" ]; then
-            echo 'ERROR: El ZIP no incluye un proyecto Android Gradle.'
-            exit 1
-          fi
-          echo "PROJECT_DIR=$(dirname "$SETTINGS")" >> "$GITHUB_ENV"
-
-      - name: Inspeccionar herramientas Paint Zeta
+          unzip -q -o Paint-Zeta-v8_8-Referencia-Color.zip -d extracted
+          echo "PROJECT_DIR=extracted/PaintZeta" >> "$GITHUB_ENV"
+      - name: Ver codigo exacto
         shell: bash
         run: |
-          echo '=== ARCHIVOS JAVA/KOTLIN ==='
-          find "$PROJECT_DIR/app/src" -type f \( -name '*.java' -o -name '*.kt' -o -name '*.xml' \) | sort
-          echo '=== COINCIDENCIAS ==='
-          grep -RInE 'Especial|Borrosidad|Difuminar|Transformar|Referencia|reference|liqu|smudge|blur|transform' "$PROJECT_DIR/app/src" --include='*.java' --include='*.kt' --include='*.xml' | head -n 1200 || true
-
-      - name: Solucionar conflicto de versiones Kotlin
+          M="$PROJECT_DIR/app/src/main/java/com/pacco/animecut/MainActivity.java"
+          C="$PROJECT_DIR/app/src/main/java/com/pacco/animecut/view/CanvasView.java"
+          echo '=== MAIN 1120-1220 ==='; sed -n '1120,1220p' "$M"
+          echo '=== MAIN 2320-2430 ==='; sed -n '2320,2430p' "$M"
+          echo '=== MAIN 3280-3585 ==='; sed -n '3280,3585p' "$M"
+          echo '=== CANVAS 5540-5825 ==='; sed -n '5540,5825p' "$C"
+      - name: Compilar
         shell: bash
-        run: |
-          set -euo pipefail
-          BUILD_FILE="$PROJECT_DIR/app/build.gradle"
-          if [ -f "$BUILD_FILE" ]; then
-            if ! grep -q 'PAINT_ZETA_KOTLIN_ALIGNMENT' "$BUILD_FILE"; then
-              printf '%s\n' \
-                '' \
-                '// PAINT_ZETA_KOTLIN_ALIGNMENT: evitar clases duplicadas de kotlin-stdlib 1.8.22 / kotlin-stdlib-jdk8 1.6.21' \
-                'configurations.configureEach {' \
-                '    resolutionStrategy.force "org.jetbrains.kotlin:kotlin-stdlib:1.8.22", "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22", "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22"' \
-                '}' >> "$BUILD_FILE"
-              echo 'Versiones Kotlin alineadas en 1.8.22.'
-            else
-              echo 'El proyecto ya trae la correccion Kotlin.'
-            fi
-          else
-            echo 'ERROR: Este proyecto no tiene app/build.gradle; se requiere una configuracion especial.'
-            exit 1
-          fi
-
-      - name: Compilar APK Android
-        shell: bash
-        run: |
-          set -o pipefail
-          gradle -p "$PROJECT_DIR" :app:assembleDebug --no-daemon --console=plain 2>&1 | tee output/build.log
-
-      - name: Preparar APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK="$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -type f -name '*.apk' -print -quit)"
-          if [ -z "$APK" ]; then
-            echo 'ERROR: No se genero APK.'
-            exit 1
-          fi
-          cp "$APK" output/Paint-Zeta-debug.apk
-
-      - name: Descargar APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Paint-Zeta-APK
-          path: output/Paint-Zeta-debug.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Guardar log si falla
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Paint-Zeta-ERROR-LOG
-          path: output/build.log
-          if-no-files-found: ignore
-          retention-days: 14
+        run: gradle -p "$PROJECT_DIR" :app:assembleDebug --no-daemon --console=plain
