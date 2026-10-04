@@ -47,6 +47,14 @@ jobs:
           fi
           echo "PROJECT_DIR=$(dirname "$SETTINGS")" >> "$GITHUB_ENV"
 
+      - name: Inspeccionar herramientas Paint Zeta
+        shell: bash
+        run: |
+          echo '=== ARCHIVOS JAVA/KOTLIN ==='
+          find "$PROJECT_DIR/app/src" -type f \( -name '*.java' -o -name '*.kt' -o -name '*.xml' \) | sort
+          echo '=== COINCIDENCIAS ==='
+          grep -RInE 'Especial|Borrosidad|Difuminar|Transformar|Referencia|reference|liqu|smudge|blur|transform' "$PROJECT_DIR/app/src" --include='*.java' --include='*.kt' --include='*.xml' | head -n 1200 || true
+
       - name: Solucionar conflicto de versiones Kotlin
         shell: bash
         run: |
