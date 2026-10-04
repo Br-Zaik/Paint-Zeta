@@ -27,15 +27,14 @@ jobs:
           mkdir -p extracted output
           unzip -q -o Paint-Zeta-v8_8-Referencia-Color.zip -d extracted
           echo "PROJECT_DIR=extracted/PaintZeta" >> "$GITHUB_ENV"
-      - name: Ver codigo exacto
+      - name: Ver panel capas y helpers
         shell: bash
         run: |
           M="$PROJECT_DIR/app/src/main/java/com/pacco/animecut/MainActivity.java"
-          C="$PROJECT_DIR/app/src/main/java/com/pacco/animecut/view/CanvasView.java"
-          echo '=== MAIN 1120-1220 ==='; sed -n '1120,1220p' "$M"
-          echo '=== MAIN 2320-2430 ==='; sed -n '2320,2430p' "$M"
-          echo '=== MAIN 3280-3585 ==='; sed -n '3280,3585p' "$M"
-          echo '=== CANVAS 5540-5825 ==='; sed -n '5540,5825p' "$C"
+          echo '=== BUILD LAYERS MATCH ==='
+          grep -n "buildLayersPanel\|layersPanel\|Capas\|smallAction" "$M" | head -n 120
+          echo '=== MAIN 1900-2330 ==='; sed -n '1900,2330p' "$M"
+          echo '=== MAIN 3520-3635 ==='; sed -n '3520,3635p' "$M"
       - name: Compilar
         shell: bash
         run: gradle -p "$PROJECT_DIR" :app:assembleDebug --no-daemon --console=plain
