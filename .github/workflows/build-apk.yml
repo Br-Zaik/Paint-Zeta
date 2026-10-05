@@ -1,52 +1,81 @@
-name: Paint Zeta v8.9
+name: Paint Zeta - Compilar APK
+
 on:
   push:
     paths:
+      - '*.zip'
       - '.github/workflows/build-apk.yml'
-      - 'tools/pz_v89_patch.py'
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v5
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar Java 17
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Preparar Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-      - name: Preparar proyecto
+
+      - name: Extraer proyecto actual
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
           rm -rf extracted output
           mkdir -p extracted output
-          unzip -q -o Paint-Zeta-v8_8-Referencia-Color.zip -d extracted
-          python3 tools/pz_v89_patch.py
-      - name: Compilar
-        run: gradle -p extracted/PaintZeta :app:assembleDebug --no-daemon --console=plain
-      - name: Entregables
+
+          ZIP="$(find . -maxdepth 1 -type f -iname 'Paint-Zeta*.zip' -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)"
+          if [ -z "$ZIP" ]; then
+            echo 'ERROR: No hay un ZIP de Paint Zeta en la raiz del repositorio.'
+            exit 1
+          fi
+
+          echo "Usando: $ZIP"
+          unzip -q -o "$ZIP" -d extracted
+
+          SETTINGS="$(find extracted -type f \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) -print -quit)"
+          if [ -z "$SETTINGS" ]; then
+            echo 'ERROR: El ZIP no contiene un proyecto Android Gradle valido.'
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$SETTINGS")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Proyecto detectado: $PROJECT_DIR"
+
+      - name: Compilar APK
+        shell: bash
         run: |
-          set -e
-          APK=$(find extracted/PaintZeta/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)
-          test -n "$APK"
+          set -euo pipefail
+          gradle -p "$PROJECT_DIR" :app:assembleDebug --no-daemon --console=plain
+
+      - name: Preparar APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find "$PROJECT_DIR/app/build/outputs/apk" -type f -name '*.apk' -print | head -n 1)"
+          if [ -z "$APK" ]; then
+            echo 'ERROR: La compilacion termino sin generar APK.'
+            exit 1
+          fi
           cp "$APK" output/Paint-Zeta-v8_9-debug.apk
-          cd extracted
-          zip -qr ../output/Paint-Zeta-v8_9-Especial-Transform-Referencia.zip PaintZeta
+          ls -lh output/Paint-Zeta-v8_9-debug.apk
+
       - name: Subir APK
         uses: actions/upload-artifact@v4
         with:
           name: Paint-Zeta-v8_9-APK
           path: output/Paint-Zeta-v8_9-debug.apk
-          if-no-files-found: error
-          retention-days: 14
-      - name: Subir fuente
-        uses: actions/upload-artifact@v4
-        with:
-          name: Paint-Zeta-v8_9-Source
-          path: output/Paint-Zeta-v8_9-Especial-Transform-Referencia.zip
           if-no-files-found: error
           retention-days: 14
